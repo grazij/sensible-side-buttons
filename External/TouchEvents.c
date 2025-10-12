@@ -11,6 +11,8 @@
 
 #include "IOHIDEventData.h"
 
+#include <mach/mach_time.h>
+
 const CFStringRef kTLInfoKeyDeviceID = CFSTR("deviceID");
 const CFStringRef kTLInfoKeyTimestamp = CFSTR("timestamp");
 const CFStringRef kTLInfoKeyGestureSubtype = CFSTR("gestureSubtype");
@@ -48,9 +50,37 @@ const CFStringRef kTLEventKeyMinorRadius = CFSTR("minorRadius");
 
 static inline IOFixed tl_float2fixed(double f) { return (IOFixed)(f * 65536.0); }
 
-static inline uint64_t tl_uptime() {
-	AbsoluteTime uptimeAbs = AbsoluteToNanoseconds(UpTime());
-	return ((uint64_t)uptimeAbs.hi << 32) + uptimeAbs.lo;
+static inline uint64_t tl_uptime(void) {
+    static mach_timebase_info_data_t timebase = {0, 0};
+    if (timebase.denom == 0) {
+        (void)mach_timebase_info(&timebase);
+        if (timebase.denom == 0) {
+            timebase.numer = 1;
+            timebase.denom = 1;
+        }
+    }
+    uint64_t t = mach_absolute_time();
+    // Convert to nanoseconds: t * numer / denom, guarding against overflow using 128-bit intermediate when available
+#if defined(__SIZEOF_INT128__)
+    __uint128_t scaled = (__uint128_t)t * (__uint128_t)timebase.numer;
+    return (uint64_t)(scaled / timebase.denom);
+#else
+    // Fallback conversion that reduces overflow risk
+    uint64_t hi = (t >> 32);
+    uint64_t lo = (uint32_t)t;
+    uint64_t numer = timebase.numer;
+    uint64_t denom = timebase.denom;
+    uint64_t hi_scaled = hi * numer;
+    uint64_t lo_scaled = lo * numer;
+    // Combine the parts and divide by denom
+    uint64_t carry = (lo_scaled >> 32);
+    uint64_t sum_hi = (hi_scaled << 32) + (carry << 32);
+    uint64_t sum_lo = (lo_scaled & 0xFFFFFFFFu);
+    uint64_t total_hi = sum_hi / denom;
+    uint64_t rem_hi = sum_hi % denom;
+    uint64_t combined = (rem_hi << 32) + sum_lo;
+    return (total_hi << 32) + (combined / denom);
+#endif
 }
 
 static inline void setVendorData(IOHIDVendorDefinedEventData* vd, const void* data) {
@@ -401,3 +431,4 @@ CGEventRef tl_CGEventCreateFromGesture(CFDictionaryRef info, CFArrayRef touches)
 	CFRelease(gestureData);
 	return synthEvent;
 }
+

@@ -82,7 +82,8 @@ typedef uint32_t IOHIDEventType;
 /*!
 	@typedef IOHIDAccelerometerType
 	@abstract Type of accelerometer event triggered.
-    @discussion
+    @discussion Indicates the specific accelerometer-triggered event type.
+    Use this to differentiate normal motion from shake gestures.
 	@constant kIOHIDAccelerometerTypeNormal
 	@constant kIOHIDAccelerometerTypeShake
 */
@@ -95,16 +96,11 @@ typedef uint32_t IOHIDAccelerometerType;
 /*!
 	@typedef IOHIDSwipeMask
 	@abstract Mask detailing the type of swipe detected.
-    @discussion
-	@constant kIOHIDProximityDetectionLargeBodyContact
-	@constant kIOHIDProximityDetectionLargeBodyFarField
-	@constant kIOHIDProximityDetectionIrregularObjects
-	@constant kIOHIDProximityDetectionEdgeStraddling
-	@constant kIOHIDProximityDetectionFlatFingerClasp
-	@constant kIOHIDProximityDetectionFingerTouch
-	@constant kIOHIDProximityDetectionReceiver
-	@constant kIOHIDProximityDetectionSmallObjectsHovering
-    @constant kIOHIDProximityDetectionReceiverCrude
+    @discussion Bitmask indicating one or more swipe directions detected by the device.
+	@constant kIOHIDSwipeUp Swipe in the upward direction.
+	@constant kIOHIDSwipeDown Swipe in the downward direction.
+	@constant kIOHIDSwipeLeft Swipe in the leftward direction.
+	@constant kIOHIDSwipeRight Swipe in the rightward direction.
 */
 enum {
     kIOHIDSwipeUp                             = 0x00000001,
@@ -118,7 +114,7 @@ typedef uint32_t IOHIDSwipeMask;
 /*!
 	@typedef IOHIDProximityDetectionMask
 	@abstract Proximity mask detailing the inputs that were detected.
-    @discussion
+    @discussion This mask indicates which proximity-related conditions were detected by the sensing hardware. Multiple bits may be set simultaneously to represent combined detections.
 	@constant kIOHIDProximityDetectionLargeBodyContact
 	@constant kIOHIDProximityDetectionLargeBodyFarField
 	@constant kIOHIDProximityDetectionIrregularObjects
@@ -207,3 +203,4 @@ enum {
 typedef uint32_t IOHIDEventOptionBits;
 
 #endif /* _IOKIT_HID_IOHIDEVENTTYPES_H */
+
