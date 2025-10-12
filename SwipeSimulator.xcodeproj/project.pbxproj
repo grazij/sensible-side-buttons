@@ -211,11 +211,7 @@
 					};
 					4ECC16951EE54D3D0062AC72 = {
 						CreatedOnToolsVersion = 8.3.1;
-						DevelopmentTeam = R4MX2B96J2;
 						ProvisioningStyle = Automatic;
-					};
-					4EF68AE01EE55A9500F6B0E8 = {
-						DevelopmentTeam = R4MX2B96J2;
 					};
 				};
 			};
@@ -232,9 +228,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				4EC7C3B41EE711B400C9F725 /* SensibleSideButtons */,
 				4ECC16951EE54D3D0062AC72 /* swipesiml */,
 				4EF68AE01EE55A9500F6B0E8 /* swipesimr */,
-				4EC7C3B41EE711B400C9F725 /* SensibleSideButtons */,
 			);
 		};
 /* End PBXProject section */
@@ -476,8 +472,9 @@
 		4ECC169E1EE54D3D0062AC72 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = R4MX2B96J2;
+				DEVELOPMENT_TEAM = 7DLRYPB8WK;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
@@ -487,6 +484,7 @@
 					"DEBUG=1",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miacloud.swipesimr;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -494,14 +492,16 @@
 		4ECC169F1EE54D3D0062AC72 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = R4MX2B96J2;
+				DEVELOPMENT_TEAM = 7DLRYPB8WK;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
 				);
 				GCC_PREPROCESSOR_DEFINITIONS = "LEFT=1";
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miacloud.swipesimr;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
@@ -509,8 +509,10 @@
 		4EF68AE71EE55A9500F6B0E8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = R4MX2B96J2;
+				DEVELOPMENT_TEAM = 7DLRYPB8WK;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
@@ -520,22 +522,28 @@
 					"DEBUG=1",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miacloud.swipesimr;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
 			name = Debug;
 		};
 		4EF68AE81EE55A9500F6B0E8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = R4MX2B96J2;
+				DEVELOPMENT_TEAM = 7DLRYPB8WK;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
 				);
 				GCC_PREPROCESSOR_DEFINITIONS = "RIGHT=1";
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miacloud.swipesimr;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
 			name = Release;
 		};

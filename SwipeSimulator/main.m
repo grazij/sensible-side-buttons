@@ -21,9 +21,16 @@
 
 #import <Foundation/Foundation.h>
 #import "TouchEvents.h"
+#import <os/log.h>
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
+        // Initialize logger using bundle identifier (fallback for command-line tool)
+        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
+        if (!bundleId) {
+            bundleId = @"net.archagon.swipe-simulator";
+        }
+        os_log_t logger = os_log_create([bundleId UTF8String], "default");
 #ifdef LEFT
         TLInfoSwipeDirection dir = kTLInfoSwipeLeft;
 #else
@@ -52,14 +59,14 @@ int main(int argc, const char * argv[]) {
         
         CFRelease(event1);
         CFRelease(event2);
-        
-        NSLog(@"sent event");
-        
+
+        os_log(logger, "sent event");
+
         // in order to complete, we have to wait
         //usleep(1000000);
         usleep(1000000/128);
-        
-        //NSLog(@"done");
+
+        //os_log(logger, "done");
     }
     return 0;
 }

@@ -21,6 +21,9 @@
 
 #import "AppDelegate.h"
 #import "TouchEvents.h"
+#import <os/log.h>
+
+static os_log_t logger;
 
 static NSMutableDictionary<NSNumber*, NSArray<NSDictionary*>*>* swipeInfo = nil;
 static NSArray* nullArray = nil;
@@ -28,10 +31,10 @@ static NSArray* nullArray = nil;
 static void SBFFakeSwipe(TLInfoSwipeDirection dir) {
     CGEventRef event1 = tl_CGEventCreateFromGesture((__bridge CFDictionaryRef)(swipeInfo[@(dir)][0]), (__bridge CFArrayRef)nullArray);
     CGEventRef event2 = tl_CGEventCreateFromGesture((__bridge CFDictionaryRef)(swipeInfo[@(dir)][1]), (__bridge CFArrayRef)nullArray);
-    
+
     CGEventPost(kCGHIDEventTap, event1);
     CGEventPost(kCGHIDEventTap, event2);
-    
+
     CFRelease(event1);
     CFRelease(event2);
 }
@@ -39,25 +42,38 @@ static void SBFFakeSwipe(TLInfoSwipeDirection dir) {
 static CGEventRef SBFMouseCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
     int64_t number = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
     BOOL down = (CGEventGetType(event) == kCGEventOtherMouseDown);
-    
+
+    // Log all mouse button events for debugging
+    os_log(logger, "Mouse button event - Button: %lld, Down: %d, Type: %d", number, down, type);
+
     BOOL mouseDown = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFMouseDown"];
     BOOL swapButtons = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFSwapButtons"];
-    
-    if (number == (swapButtons ? 4 : 3)) {
+
+    os_log(logger, "Settings - mouseDown: %d, swapButtons: %d", mouseDown, swapButtons);
+
+    // M3 button (button 2) - just log when detected
+    if (number == 2) {
+        os_log(logger, "M3 button detected (button 2)");
+        return event;
+    }
+    else if (number == (swapButtons ? 4 : 3)) {
+        os_log(logger, "Back button detected - triggering swipe left");
         if ((mouseDown && down) || (!mouseDown && !down)) {
             SBFFakeSwipe(kTLInfoSwipeLeft);
         }
-        
+
         return NULL;
     }
     else if (number == (swapButtons ? 3 : 4)) {
+        os_log(logger, "Forward button detected - triggering swipe right");
         if ((mouseDown && down) || (!mouseDown && !down)) {
             SBFFakeSwipe(kTLInfoSwipeRight);
         }
-        
+
         return NULL;
     }
     else {
+        os_log(logger, "Unhandled button - passing through");
         return event;
     }
 }
@@ -123,6 +139,14 @@ typedef NS_ENUM(NSInteger, MenuItem) {
 }
 
 -(void) applicationDidFinishLaunching:(NSNotification *)aNotification {
+    // Initialize logger for console output using bundle identifier
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
+    if (!bundleId) {
+        bundleId = @"net.archagon.sensible-side-buttons";
+    }
+    logger = os_log_create([bundleId UTF8String], "default");
+    os_log(logger, "=== SensibleSideButtons started ===");
+
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
                                                               @"SBFWasEnabled": @YES,
                                                               @"SBFMouseDown": @YES,
@@ -180,7 +204,7 @@ typedef NS_ENUM(NSInteger, MenuItem) {
         swapItem.state = NSControlStateValueOff;
         [menu addItem:swapItem];
         assert(menu.itemArray.count - 1 == MenuItemSwapButtons);
-        
+
         [menu addItem:[NSMenuItem separatorItem]];
         assert(menu.itemArray.count - 1 == MenuItemOptionsSeparator);
         
@@ -263,7 +287,7 @@ typedef NS_ENUM(NSInteger, MenuItem) {
     self.statusItem.menu.itemArray[MenuItemEnabled].state = self.tap != NULL && CGEventTapIsEnabled(self.tap);
     self.statusItem.menu.itemArray[MenuItemTriggerOnMouseDown].state = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFMouseDown"];
     self.statusItem.menu.itemArray[MenuItemSwapButtons].state = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFSwapButtons"];
-    
+
     switch (self.menuMode) {
         case MenuModeAccessibility:
             self.statusItem.menu.itemArray[MenuItemEnabled].enabled = NO;
