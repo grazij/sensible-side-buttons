@@ -25,6 +25,10 @@
 
 static os_log_t logger;
 
+// Cached preferences to avoid reading NSUserDefaults in the hot path
+static BOOL cachedMouseDown = YES;
+static BOOL cachedSwapButtons = NO;
+
 static NSMutableDictionary<NSNumber*, NSArray<NSDictionary*>*>* swipeInfo = nil;
 static NSArray* nullArray = nil;
 
@@ -43,37 +47,31 @@ static CGEventRef SBFMouseCallback(CGEventTapProxy proxy, CGEventType type, CGEv
     int64_t number = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
     BOOL down = (CGEventGetType(event) == kCGEventOtherMouseDown);
 
-    // Log all mouse button events for debugging
-    os_log(logger, "Mouse button event - Button: %lld, Down: %d, Type: %d", number, down, type);
-
-    BOOL mouseDown = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFMouseDown"];
-    BOOL swapButtons = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFSwapButtons"];
-
-    os_log(logger, "Settings - mouseDown: %d, swapButtons: %d", mouseDown, swapButtons);
+    // Use cached preferences instead of reading NSUserDefaults on hot path
+    BOOL mouseDown = cachedMouseDown;
+    BOOL swapButtons = cachedSwapButtons;
 
     // M3 button (button 2) - just log when detected
     if (number == 2) {
-        os_log(logger, "M3 button detected (button 2)");
+        os_log_debug(logger ?: OS_LOG_DEFAULT, "M3 button detected (button 2)");
         return event;
     }
     else if (number == (swapButtons ? 4 : 3)) {
-        os_log(logger, "Back button detected - triggering swipe left");
+        os_log_debug(logger ?: OS_LOG_DEFAULT, "Back button - triggering swipe left");
         if ((mouseDown && down) || (!mouseDown && !down)) {
             SBFFakeSwipe(kTLInfoSwipeLeft);
         }
-
         return NULL;
     }
     else if (number == (swapButtons ? 3 : 4)) {
-        os_log(logger, "Forward button detected - triggering swipe right");
+        os_log_debug(logger ?: OS_LOG_DEFAULT, "Forward button - triggering swipe right");
         if ((mouseDown && down) || (!mouseDown && !down)) {
             SBFFakeSwipe(kTLInfoSwipeRight);
         }
-
         return NULL;
     }
     else {
-        os_log(logger, "Unhandled button - passing through");
+        // Unhandled button - pass through silently (no logging for common buttons)
         return event;
     }
 }
@@ -116,9 +114,20 @@ typedef NS_ENUM(NSInteger, MenuItem) {
 
 @implementation AppDelegate
 
+// Helper method to update cached preferences
+-(void) updateCachedPreferences {
+    cachedMouseDown = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFMouseDown"];
+    cachedSwapButtons = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFSwapButtons"];
+    os_log_debug(logger ?: OS_LOG_DEFAULT, "Preferences cached - mouseDown: %d, swapButtons: %d", cachedMouseDown, cachedSwapButtons);
+}
+
 -(void) dealloc {
     [self startTap:NO];
-    
+
+    if (logger) {
+        logger = NULL;
+    }
+
     swipeInfo = nil;
     nullArray = nil;
 }
@@ -139,7 +148,7 @@ typedef NS_ENUM(NSInteger, MenuItem) {
 }
 
 -(void) applicationDidFinishLaunching:(NSNotification *)aNotification {
-    // Initialize logger for console output using bundle identifier
+    // Initialize logger FIRST before anything else (including event tap)
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
     if (!bundleId) {
         bundleId = @"net.archagon.sensible-side-buttons";
@@ -147,12 +156,16 @@ typedef NS_ENUM(NSInteger, MenuItem) {
     logger = os_log_create([bundleId UTF8String], "default");
     os_log(logger, "=== SensibleSideButtons started ===");
 
+    // Register defaults
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
                                                               @"SBFWasEnabled": @YES,
                                                               @"SBFMouseDown": @YES,
                                                               @"SBFDonated": @NO,
                                                               @"SBFSwapButtons": @NO
                                                               }];
+
+    // Cache preferences to avoid repeated NSUserDefaults reads in the hot path
+    [self updateCachedPreferences];
     
     // setup globals
     {
@@ -348,13 +361,16 @@ typedef NS_ENUM(NSInteger, MenuItem) {
                                         CGEventMaskBit(kCGEventOtherMouseUp)|CGEventMaskBit(kCGEventOtherMouseDown),
                                         &SBFMouseCallback,
                                         NULL);
-            
+
             if (self.tap != NULL) {
                 CFRunLoopSourceRef runLoopSource = CFMachPortCreateRunLoopSource(NULL, self.tap, 0);
                 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, kCFRunLoopCommonModes);
                 CFRelease(runLoopSource);
-                
+
                 CGEventTapEnable(self.tap, true);
+                os_log(logger, "Event tap enabled successfully");
+            } else {
+                os_log_error(logger, "Failed to create event tap - check Accessibility permissions");
             }
         }
     }
@@ -362,11 +378,12 @@ typedef NS_ENUM(NSInteger, MenuItem) {
         if (self.tap != NULL) {
             CGEventTapEnable(self.tap, NO);
             CFRelease(self.tap);
-            
+
             self.tap = NULL;
+            os_log(logger, "Event tap disabled");
         }
     }
-    
+
     [[NSUserDefaults standardUserDefaults] setBool:self.tap != NULL && CGEventTapIsEnabled(self.tap) forKey:@"SBFWasEnabled"];
 }
 
@@ -377,11 +394,13 @@ typedef NS_ENUM(NSInteger, MenuItem) {
 
 -(void) mouseDownToggle:(id)sender {
     [[NSUserDefaults standardUserDefaults] setBool:![[NSUserDefaults standardUserDefaults] boolForKey:@"SBFMouseDown"] forKey:@"SBFMouseDown"];
+    [self updateCachedPreferences];
     [self refreshSettings];
 }
 
 -(void) swapToggle:(id)sender {
     [[NSUserDefaults standardUserDefaults] setBool:![[NSUserDefaults standardUserDefaults] boolForKey:@"SBFSwapButtons"] forKey:@"SBFSwapButtons"];
+    [self updateCachedPreferences];
     [self refreshSettings];
 }
 
