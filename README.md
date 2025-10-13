@@ -1,5 +1,5 @@
 ```info
-Forked to make a dmg with a fat binary supporting arm64 and add it to my homebrew tap (grazij/tap).
+Forked to make a dmg with a arm64+intel binary and add it to my homebrew tap (grazij/tap).
 ```
 
 <img src="icon.png" width=150 />
