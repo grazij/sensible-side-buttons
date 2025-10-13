@@ -1,48 +1,29 @@
 #!/bin/bash
 
 ################################################################################
-# SensibleSideButtons Build Script
+# Generic macOS Build Script
 #
-# This script builds the SensibleSideButtons application with various options
-# including Debug, Release, Archive, and Distribution builds.
+# This script provides comprehensive build automation for macOS applications.
+# Configuration is loaded from .env via build-config.sh
 ################################################################################
 
 set -e  # Exit on error
 
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Load configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/build-config.sh"
 
-# Project configuration
-PROJECT_NAME="SwipeSimulator.xcodeproj"
-SCHEME_NAME="SensibleSideButtons"
-APP_NAME="SensibleSideButtons.app"
-BUILD_DIR="./build"
+# Initialize version variables
+export VERSION=$(get_version)
+export BUNDLE_ID=$(get_bundle_id)
+export BUILD_NUMBER=$(get_build_number)
+
+# Ensure BUILD_DIR is absolute
+export BUILD_DIR="$(get_absolute_build_dir)"
 
 ################################################################################
-# Helper Functions
+# Usage
 ################################################################################
-
-print_header() {
-    echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  $1${NC}"
-    echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
-}
-
-print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}✗ $1${NC}"
-}
-
-print_info() {
-    echo -e "${YELLOW}→ $1${NC}"
-}
 
 show_usage() {
     cat << EOF
@@ -53,7 +34,10 @@ Commands:
     release         Build Release configuration (default)
     clean           Clean build artifacts
     archive         Create distributable archive
+    sign            Sign with Developer ID for distribution
     dmg             Create DMG for distribution
+    notarize        Notarize the app/DMG with Apple
+    package         Complete workflow: build, sign, dmg, notarize
     install         Build Release and install to /Applications
     verify          Verify code signing and architecture
     show            Show build output locations
@@ -63,16 +47,30 @@ Options:
     --no-clean      Skip cleaning before build
     --verbose       Show detailed build output
 
+Notarization Options (for 'notarize' and 'package' commands):
+    --keychain PROFILE      Use keychain profile (recommended)
+    --apple-id EMAIL        Apple ID email
+    --team-id TEAM_ID       Apple Developer Team ID
+    --password PASSWORD     App-specific password
+    --app                   Notarize app bundle instead of DMG
+
 Examples:
-    $0 release              # Build Release configuration
-    $0 debug                # Build Debug configuration
-    $0 dmg                  # Create DMG for distribution
-    $0 install              # Build and install to /Applications
-    $0 archive              # Create archive for distribution
-    $0 clean release        # Clean and build Release
+    $0 release                          # Build Release
+    $0 package --keychain PROFILE       # Complete distribution build
+    $0 notarize --keychain PROFILE      # Notarize existing DMG
+    $0 clean release                    # Clean and build
+
+Configuration:
+    Project settings loaded from .env
+    Current project: $PROJECT_NAME
+    Version: $VERSION
 
 EOF
 }
+
+################################################################################
+# Build Functions
+################################################################################
 
 clean_build() {
     print_header "Cleaning Build Artifacts"
@@ -84,7 +82,7 @@ clean_build() {
     fi
 
     print_info "Cleaning Xcode build artifacts..."
-    xcodebuild -project "$PROJECT_NAME" \
+    xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
                -scheme "$SCHEME_NAME" \
                clean > /dev/null 2>&1
 
@@ -101,61 +99,55 @@ build_configuration() {
     local build_output="$BUILD_DIR/$config"
     mkdir -p "$build_output"
 
-    print_info "Building universal binary (ARM64 + x86_64)..."
+    print_info "Building universal binary ($BUILD_ARCHS)..."
     print_info "Output: $build_output"
 
-    # Convert to absolute path
-    local abs_build_dir=$(cd "$BUILD_DIR" && pwd)
+    # Get architecture flags
+    local arch_flags=$(get_arch_flags)
 
     if [ "$verbose" = true ]; then
-        xcodebuild -project "$PROJECT_NAME" \
+        xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
                    -scheme "$SCHEME_NAME" \
                    -configuration "$config" \
-                   -arch arm64 -arch x86_64 \
+                   $arch_flags \
                    ONLY_ACTIVE_ARCH=NO \
-                   CONFIGURATION_BUILD_DIR="$abs_build_dir/$config" \
+                   CONFIGURATION_BUILD_DIR="$build_output" \
                    build
     else
-        xcodebuild -project "$PROJECT_NAME" \
+        xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
                    -scheme "$SCHEME_NAME" \
                    -configuration "$config" \
-                   -arch arm64 -arch x86_64 \
+                   $arch_flags \
                    ONLY_ACTIVE_ARCH=NO \
-                   CONFIGURATION_BUILD_DIR="$abs_build_dir/$config" \
+                   CONFIGURATION_BUILD_DIR="$build_output" \
                    build 2>&1 | grep -E "(BUILD|error:|warning:)" || true
     fi
 
-    if [ $? -eq 0 ]; then
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
         print_success "$config build completed successfully"
 
-        local app_path="$build_output/$APP_NAME"
+        local app_path="$(get_app_path "$config")"
 
         if [ -d "$app_path" ]; then
             print_info "Build location: $app_path"
 
-            # Get binary size and verify architectures
-            local binary_path="$app_path/Contents/MacOS/SensibleSideButtons"
+            # Verify architectures
+            local binary_path="$app_path/Contents/MacOS/$APP_NAME_NO_EXT"
             if [ -f "$binary_path" ]; then
                 local size=$(du -h "$binary_path" | cut -f1)
                 print_info "Binary size: $size"
 
                 echo ""
                 print_info "Verifying architectures..."
-                local arch_info=$(file "$binary_path")
-
-                if echo "$arch_info" | grep -q "universal binary"; then
+                if file "$binary_path" | grep -q "universal binary"; then
                     print_success "Universal binary detected"
-                    if echo "$arch_info" | grep -q "arm64" && echo "$arch_info" | grep -q "x86_64"; then
+                    if file "$binary_path" | grep -q "arm64" && file "$binary_path" | grep -q "x86_64"; then
                         print_success "✓ arm64 (Apple Silicon)"
                         print_success "✓ x86_64 (Intel)"
-                    else
-                        print_error "Missing architectures!"
-                        file "$binary_path"
                     fi
                 else
                     print_error "Not a universal binary!"
                     file "$binary_path"
-                    print_error "Build may have failed to include all architectures"
                 fi
             fi
         fi
@@ -165,143 +157,67 @@ build_configuration() {
     fi
 }
 
-create_archive() {
-    print_header "Creating Archive"
+sign_for_distribution() {
+    print_header "Signing for Distribution"
 
-    local archive_path="$BUILD_DIR/Archive/SensibleSideButtons.xcarchive"
-
-    mkdir -p "$BUILD_DIR/Archive"
-
-    print_info "Creating archive (this may take a moment)..."
-
-    # Convert to absolute path
-    local abs_archive_path=$(cd "$BUILD_DIR/Archive" && pwd)/SensibleSideButtons.xcarchive
-
-    xcodebuild -project "$PROJECT_NAME" \
-               -scheme "$SCHEME_NAME" \
-               -configuration Release \
-               -arch arm64 -arch x86_64 \
-               ONLY_ACTIVE_ARCH=NO \
-               archive \
-               -archivePath "$abs_archive_path" \
-               | grep -E "(BUILD|ARCHIVE|error:|warning:)" || true
-
-    if [ -d "$archive_path" ]; then
-        print_success "Archive created successfully"
-        print_info "Archive location: $archive_path"
-
-        # Copy the app from archive to build/Release directory
-        local app_in_archive="$archive_path/Products/Applications/$APP_NAME"
-        if [ -d "$app_in_archive" ]; then
-            mkdir -p "$BUILD_DIR/Release"
-            cp -R "$app_in_archive" "$BUILD_DIR/Release/"
-            print_success "App copied to $BUILD_DIR/Release/$APP_NAME"
-        fi
-    else
-        print_error "Archive creation failed"
-        exit 1
-    fi
-}
-
-install_app() {
-    print_header "Installing to /Applications"
-
-    # First build release
-    build_configuration "Release" false
-
-    # Use the built app from local build directory
-    local built_app="$BUILD_DIR/Release/$APP_NAME"
-
-    if [ ! -d "$built_app" ]; then
-        print_error "Could not find built application at $built_app"
-        exit 1
-    fi
-
-    # Check if app already exists
-    if [ -d "/Applications/$APP_NAME" ]; then
-        print_info "Removing existing app from /Applications..."
-        rm -rf "/Applications/$APP_NAME"
-    fi
-
-    print_info "Copying app to /Applications..."
-    cp -R "$built_app" /Applications/
-
-    print_success "App installed to /Applications/$APP_NAME"
-
-    # Verify the installation
-    if [ -d "/Applications/$APP_NAME" ]; then
-        print_info "Opening /Applications folder..."
-        open /Applications
-    fi
-}
-
-verify_build() {
-    print_header "Verifying Build"
-
-    # Look in local build directory first
-    local app_path="$BUILD_DIR/Release/$APP_NAME"
+    local app_path="$(get_app_path Release)"
 
     if [ ! -d "$app_path" ]; then
-        # Try Debug
-        app_path="$BUILD_DIR/Debug/$APP_NAME"
-    fi
-
-    if [ ! -d "$app_path" ]; then
-        print_error "No build found to verify. Run './build.sh release' first."
+        print_error "Release build not found at $app_path"
+        print_info "Run '$0 release' first"
         exit 1
     fi
 
-    print_info "Verifying: $app_path"
-    echo ""
+    # Find Developer ID certificate
+    print_info "Looking for Developer ID Application certificate..."
+    local dev_id_cert=$(get_dist_signing_identity)
 
-    local binary_path="$app_path/Contents/MacOS/SensibleSideButtons"
-
-    # Check architecture
-    print_info "Architecture:"
-    file "$binary_path" | grep -o "Mach-O.*" || true
-    echo ""
-
-    # Check with lipo for detailed arch info
-    print_info "Architectures (lipo):"
-    lipo -info "$binary_path" 2>/dev/null || echo "  Unable to get lipo info"
-    echo ""
-
-    # Check code signing
-    print_info "Code Signing:"
-    codesign -dvvv "$app_path" 2>&1 | grep -E "(Identifier|Authority|TeamIdentifier)" || true
-    echo ""
-
-    # Verify signature
-    print_info "Signature Verification:"
-    if codesign --verify --deep --strict "$app_path" 2>/dev/null; then
-        print_success "Signature is valid"
-    else
-        print_error "Signature verification failed"
+    if [ -z "$dev_id_cert" ]; then
+        print_error "No Developer ID Application certificate found!"
+        echo ""
+        echo "Create certificate in Xcode > Settings > Accounts > Manage Certificates"
+        echo "Or see SIGNING-FOR-NOTARIZATION.md for detailed instructions"
+        exit 1
     fi
+
+    print_success "Found certificate: $dev_id_cert"
     echo ""
 
-    # Check bundle info
-    print_info "Bundle Information:"
-    if [ -f "$app_path/Contents/Info.plist" ]; then
-        echo "  Bundle ID: $(plutil -extract CFBundleIdentifier raw "$app_path/Contents/Info.plist")"
-        echo "  Version: $(plutil -extract CFBundleShortVersionString raw "$app_path/Contents/Info.plist")"
-        echo "  Build: $(plutil -extract CFBundleVersion raw "$app_path/Contents/Info.plist")"
+    print_info "Signing with Developer ID for distribution..."
+    print_info "  - Hardened runtime enabled"
+    print_info "  - Secure timestamp enabled"
+    echo ""
+
+    codesign --deep --force --verify --verbose \
+        --sign "$dev_id_cert" \
+        --options runtime \
+        --timestamp \
+        "$app_path" 2>&1 | grep -E "(replacing|signed)" || true
+
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        print_success "Successfully signed for distribution"
+        echo ""
+
+        print_info "Verifying signature..."
+        codesign -dvvv "$app_path" 2>&1 | grep "Authority" | head -3
+
+        echo ""
+        print_success "App is now signed for distribution"
+        echo ""
+        print_info "Next steps:"
+        echo "  $0 dmg                    # Create DMG"
+        echo "  $0 notarize --keychain PROFILE  # Notarize"
+    else
+        print_error "Code signing failed"
+        exit 1
     fi
 }
 
 create_dmg() {
     print_header "Creating DMG"
 
-    # Get version from Info.plist
-    local info_plist="./SideButtonFixer/Info.plist"
-    local version="1.0.6"
-
-    if [ -f "$info_plist" ]; then
-        version=$(plutil -extract CFBundleShortVersionString raw "$info_plist" 2>/dev/null || echo "1.0.6")
-    fi
-
-    local dmg_name="SensibleSideButtons-${version}.dmg"
-    local app_path="$BUILD_DIR/Release/$APP_NAME"
+    local dmg_path="$(get_dmg_path)"
+    local app_path="$(get_app_path Release)"
 
     # Check if Release build exists
     if [ ! -d "$app_path" ]; then
@@ -314,130 +230,304 @@ create_dmg() {
         exit 1
     fi
 
-    print_info "Creating DMG: $dmg_name"
+    print_info "Creating DMG: $(basename "$dmg_path")"
     print_info "Source: $app_path"
 
     # Remove old DMG if exists
-    if [ -f "$BUILD_DIR/$dmg_name" ]; then
+    if [ -f "$dmg_path" ]; then
         print_info "Removing old DMG..."
-        rm "$BUILD_DIR/$dmg_name"
+        rm "$dmg_path"
     fi
 
     # Create temporary directory for DMG contents
     local temp_dmg_dir=$(mktemp -d)
     print_info "Preparing DMG contents..."
 
-    # Copy app to temp directory
     cp -R "$app_path" "$temp_dmg_dir/"
-
-    # Create Applications symlink for easy installation
     ln -s /Applications "$temp_dmg_dir/Applications"
 
     print_info "Creating disk image..."
 
-    # Create DMG
-    hdiutil create -volname "SensibleSideButtons" \
+    local dmg_volume_name=$(get_dmg_volume_name)
+    hdiutil create -volname "$dmg_volume_name" \
                    -srcfolder "$temp_dmg_dir" \
                    -ov \
                    -format UDZO \
                    -imagekey zlib-level=9 \
-                   "$BUILD_DIR/$dmg_name" > /dev/null 2>&1
+                   "$dmg_path" > /dev/null 2>&1
 
-    # Clean up temp directory
     rm -rf "$temp_dmg_dir"
 
-    if [ -f "$BUILD_DIR/$dmg_name" ]; then
+    if [ -f "$dmg_path" ]; then
         print_success "DMG created successfully"
-        print_info "Location: $BUILD_DIR/$dmg_name"
+        print_info "Location: $dmg_path"
 
-        # Get DMG size
-        local dmg_size=$(du -h "$BUILD_DIR/$dmg_name" | cut -f1)
+        local dmg_size=$(du -h "$dmg_path" | cut -f1)
         print_info "Size: $dmg_size"
 
         echo ""
         print_header "DMG Information"
-        echo "  Filename: $dmg_name"
-        echo "  Version: $version"
-        echo "  Location: $BUILD_DIR/$dmg_name"
+        echo "  Filename: $(basename "$dmg_path")"
+        echo "  Version: $VERSION"
+        echo "  Location: $dmg_path"
         echo "  Size: $dmg_size"
         echo ""
-
-        print_info "To test the DMG:"
-        echo "  open '$BUILD_DIR/$dmg_name'"
-        echo ""
-
-        print_info "To verify the DMG:"
-        echo "  hdiutil verify '$BUILD_DIR/$dmg_name'"
     else
         print_error "Failed to create DMG"
         exit 1
     fi
 }
 
+notarize_build() {
+    print_header "Notarizing with Apple"
+
+    # Parse notarization-specific options
+    local apple_id=""
+    local team_id=""
+    local password=""
+    local keychain_profile=""
+    local notarize_app=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --apple-id) apple_id="$2"; shift 2 ;;
+            --team-id) team_id="$2"; shift 2 ;;
+            --password) password="$2"; shift 2 ;;
+            --keychain) keychain_profile="$2"; shift 2 ;;
+            --app) notarize_app=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    # Use config if not provided
+    keychain_profile="${keychain_profile:-${NOTARIZATION_KEYCHAIN_PROFILE:-}}"
+    apple_id="${apple_id:-${NOTARIZATION_APPLE_ID:-}}"
+    team_id="${team_id:-${NOTARIZATION_TEAM_ID:-}}"
+    password="${password:-${NOTARIZATION_PASSWORD:-}}"
+
+    # Determine what to notarize
+    local file_to_notarize=""
+
+    if [ "$notarize_app" = true ]; then
+        file_to_notarize="$(get_app_path Release)"
+        if [ ! -d "$file_to_notarize" ]; then
+            print_error "App not found. Run '$0 release' first"
+            exit 1
+        fi
+        # Create ZIP for notarization
+        local zip_path="$BUILD_DIR/$(get_app_name_no_ext)-notarize.zip"
+        print_info "Creating ZIP for notarization..."
+        ditto -c -k --keepParent "$file_to_notarize" "$zip_path"
+        file_to_notarize="$zip_path"
+    else
+        file_to_notarize="$(get_dmg_path)"
+        if [ ! -f "$file_to_notarize" ]; then
+            print_error "DMG not found. Run '$0 dmg' first"
+            exit 1
+        fi
+    fi
+
+    print_info "File to notarize: $file_to_notarize"
+
+    # Check credentials
+    if [ -z "$keychain_profile" ] && [ -z "$apple_id" ]; then
+        print_error "Missing credentials!"
+        echo ""
+        echo "Set in .env: NOTARIZATION_KEYCHAIN_PROFILE=your_profile"
+        echo "Or use: $0 notarize --keychain PROFILE"
+        exit 1
+    fi
+
+    # Build notarytool command
+    local notarytool_cmd="xcrun notarytool submit \"$file_to_notarize\""
+
+    if [ -n "$keychain_profile" ]; then
+        print_info "Using keychain profile: $keychain_profile"
+        notarytool_cmd="$notarytool_cmd --keychain-profile \"$keychain_profile\""
+    else
+        notarytool_cmd="$notarytool_cmd --apple-id \"$apple_id\" --team-id \"$team_id\" --password \"$password\""
+    fi
+
+    notarytool_cmd="$notarytool_cmd --wait"
+
+    print_info "Submitting for notarization..."
+    echo ""
+
+    eval $notarytool_cmd
+    local result=$?
+
+    echo ""
+
+    if [ $result -eq 0 ]; then
+        print_success "Notarization completed!"
+
+        print_info "Stapling notarization ticket..."
+
+        if [ "$notarize_app" = true ]; then
+            xcrun stapler staple "$(get_app_path Release)"
+            rm -f "$zip_path"
+            print_success "Ticket stapled to app"
+        else
+            xcrun stapler staple "$file_to_notarize"
+            print_success "Ticket stapled to DMG"
+        fi
+
+        echo ""
+        print_header "Notarization Complete"
+        print_success "Your build is now notarized and ready for distribution!"
+    else
+        print_error "Notarization failed"
+        echo ""
+        echo "Check the log with:"
+        echo "  xcrun notarytool history --keychain-profile $keychain_profile"
+        exit 1
+    fi
+}
+
+verify_build() {
+    print_header "Verifying Build"
+
+    local app_path="$(get_app_path Release)"
+    [ ! -d "$app_path" ] && app_path="$(get_app_path Debug)"
+
+    if [ ! -d "$app_path" ]; then
+        print_error "No build found. Run '$0 release' first"
+        exit 1
+    fi
+
+    print_info "Verifying: $app_path"
+    echo ""
+
+    local binary_path="$app_path/Contents/MacOS/$APP_NAME_NO_EXT"
+
+    print_info "Architecture:"
+    file "$binary_path" | grep -o "Mach-O.*" || true
+    echo ""
+
+    print_info "Architectures (lipo):"
+    lipo -info "$binary_path" 2>/dev/null || echo "  Unable to get lipo info"
+    echo ""
+
+    print_info "Code Signing:"
+    codesign -dvvv "$app_path" 2>&1 | grep -E "(Identifier|Authority|TeamIdentifier)" || true
+    echo ""
+
+    print_info "Signature Verification:"
+    if codesign --verify --deep --strict "$app_path" 2>/dev/null; then
+        print_success "Signature is valid"
+    else
+        print_error "Signature verification failed"
+    fi
+    echo ""
+
+    print_info "Bundle Information:"
+    echo "  Bundle ID: $BUNDLE_ID"
+    echo "  Version: $VERSION"
+    echo "  Build: $BUILD_NUMBER"
+}
+
+install_app() {
+    print_header "Installing to /Applications"
+
+    build_configuration "Release" false
+
+    local built_app="$(get_app_path Release)"
+
+    if [ ! -d "$built_app" ]; then
+        print_error "Could not find built application"
+        exit 1
+    fi
+
+    if [ -d "/Applications/$APP_NAME" ]; then
+        print_info "Removing existing app from /Applications..."
+        rm -rf "/Applications/$APP_NAME"
+    fi
+
+    print_info "Copying app to /Applications..."
+    cp -R "$built_app" /Applications/
+
+    print_success "App installed to /Applications/$APP_NAME"
+
+    if [ -d "/Applications/$APP_NAME" ]; then
+        print_info "Opening /Applications folder..."
+        open /Applications
+    fi
+}
+
 show_output_locations() {
     print_header "Build Output Locations"
 
-    # Check local build directory
     local has_build=false
 
-    if [ -d "$BUILD_DIR/Release/$APP_NAME" ]; then
+    if [ -d "$(get_app_path Release)" ]; then
         print_success "Release Build Found"
-        echo "  $BUILD_DIR/Release/$APP_NAME"
-
-        local binary="$BUILD_DIR/Release/$APP_NAME/Contents/MacOS/SensibleSideButtons"
-        if [ -f "$binary" ]; then
-            local size=$(du -h "$binary" | cut -f1)
-            print_info "Size: $size"
-            print_info "Architectures:"
-            file "$binary" | grep -o "Mach-O.*" | sed 's/^/  /'
-        fi
-        echo ""
+        echo "  $(get_app_path Release)"
         has_build=true
+        echo ""
     fi
 
-    if [ -d "$BUILD_DIR/Debug/$APP_NAME" ]; then
+    if [ -d "$(get_app_path Debug)" ]; then
         print_success "Debug Build Found"
-        echo "  $BUILD_DIR/Debug/$APP_NAME"
-        echo ""
+        echo "  $(get_app_path Debug)"
         has_build=true
+        echo ""
     fi
 
-    if [ -d "$BUILD_DIR/Archive/SensibleSideButtons.xcarchive" ]; then
-        print_success "Archive Found"
-        echo "  $BUILD_DIR/Archive/SensibleSideButtons.xcarchive"
-        echo ""
+    local dmg_path="$(get_dmg_path)"
+    if [ -f "$dmg_path" ]; then
+        print_success "DMG Found"
+        echo "  $dmg_path"
         has_build=true
+        echo ""
     fi
 
     if [ "$has_build" = false ]; then
-        print_error "No local builds found"
-        echo "  Run: ./build.sh release"
+        print_error "No builds found"
+        echo "  Run: $0 release"
         echo ""
     fi
 
-    # Check if installed
     if [ -d "/Applications/$APP_NAME" ]; then
         print_success "Installed Version"
         echo "  /Applications/$APP_NAME"
-        local version=$(plutil -extract CFBundleShortVersionString raw "/Applications/$APP_NAME/Contents/Info.plist" 2>/dev/null)
-        echo "  Version: $version"
-        echo ""
-    else
-        print_info "Not installed (run: ./build.sh install)"
+        echo "  Version: $VERSION"
         echo ""
     fi
+}
 
-    # Quick actions
-    if [ "$has_build" = true ]; then
-        print_header "Quick Actions"
-        echo "Open build folder:"
-        echo "  open '$BUILD_DIR'"
-        echo ""
-        if [ -d "$BUILD_DIR/Release/$APP_NAME" ]; then
-            echo "Copy to Desktop:"
-            echo "  cp -R '$BUILD_DIR/Release/$APP_NAME' ~/Desktop/"
-            echo ""
+create_archive() {
+    print_header "Creating Archive"
+
+    local archive_path="$BUILD_DIR/Archive/${APP_NAME_NO_EXT}.xcarchive"
+    mkdir -p "$BUILD_DIR/Archive"
+
+    print_info "Creating archive..."
+
+    local arch_flags=$(get_arch_flags)
+
+    xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
+               -scheme "$SCHEME_NAME" \
+               -configuration Release \
+               $arch_flags \
+               ONLY_ACTIVE_ARCH=NO \
+               archive \
+               -archivePath "$archive_path" \
+               | grep -E "(BUILD|ARCHIVE|error:|warning:)" || true
+
+    if [ -d "$archive_path" ]; then
+        print_success "Archive created successfully"
+        print_info "Archive location: $archive_path"
+
+        # Copy app from archive
+        local app_in_archive="$archive_path/Products/Applications/$APP_NAME"
+        if [ -d "$app_in_archive" ]; then
+            mkdir -p "$BUILD_DIR/Release"
+            cp -R "$app_in_archive" "$BUILD_DIR/Release/"
+            print_success "App copied to $BUILD_DIR/Release/$APP_NAME"
         fi
+    else
+        print_error "Archive creation failed"
+        exit 1
     fi
 }
 
@@ -449,12 +539,19 @@ show_output_locations() {
 COMMAND=""
 NO_CLEAN=false
 VERBOSE=false
+NOTARIZE_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        debug|release|clean|archive|dmg|install|verify|show|help)
+        debug|release|clean|archive|sign|dmg|install|verify|show|help)
             COMMAND=$1
             shift
+            ;;
+        notarize|package)
+            COMMAND=$1
+            shift
+            NOTARIZE_ARGS=("$@")
+            break
             ;;
         --no-clean)
             NO_CLEAN=true
@@ -472,14 +569,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Default to release if no command specified
-if [ -z "$COMMAND" ]; then
-    COMMAND="release"
-fi
+# Default to release
+[ -z "$COMMAND" ] && COMMAND="release"
 
 # Show header
 echo ""
-print_header "SensibleSideButtons Build Script"
+print_header "Build Script - $APP_NAME_NO_EXT v$VERSION"
 echo ""
 
 # Execute command
@@ -491,34 +586,37 @@ case $COMMAND in
         clean_build
         ;;
     debug)
-        if [ "$NO_CLEAN" = false ]; then
-            clean_build
-        fi
+        [ "$NO_CLEAN" = false ] && clean_build
         build_configuration "Debug" $VERBOSE
         ;;
     release)
-        if [ "$NO_CLEAN" = false ]; then
-            clean_build
-        fi
+        [ "$NO_CLEAN" = false ] && clean_build
         build_configuration "Release" $VERBOSE
         ;;
     archive)
-        if [ "$NO_CLEAN" = false ]; then
-            clean_build
-        fi
+        [ "$NO_CLEAN" = false ] && clean_build
         create_archive
         verify_build
         ;;
+    sign)
+        sign_for_distribution
+        ;;
     dmg)
-        if [ "$NO_CLEAN" = false ]; then
-            clean_build
-        fi
+        [ "$NO_CLEAN" = false ] && clean_build
         create_dmg
         ;;
+    notarize)
+        notarize_build "${NOTARIZE_ARGS[@]}"
+        ;;
+    package)
+        [ "$NO_CLEAN" = false ] && clean_build
+        build_configuration "Release" $VERBOSE
+        sign_for_distribution
+        create_dmg
+        notarize_build "${NOTARIZE_ARGS[@]}"
+        ;;
     install)
-        if [ "$NO_CLEAN" = false ]; then
-            clean_build
-        fi
+        [ "$NO_CLEAN" = false ] && clean_build
         install_app
         ;;
     verify)

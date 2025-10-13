@@ -1,6 +1,9 @@
 # Build output
 build/
 
+# Environment configuration (may contain secrets)
+.env
+
 # Xcode
 *.xcodeproj/*
 !*.xcodeproj/project.pbxproj
