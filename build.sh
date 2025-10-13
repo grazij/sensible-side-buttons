@@ -53,6 +53,7 @@ Commands:
     release         Build Release configuration (default)
     clean           Clean build artifacts
     archive         Create distributable archive
+    dmg             Create DMG for distribution
     install         Build Release and install to /Applications
     verify          Verify code signing and architecture
     show            Show build output locations
@@ -65,6 +66,7 @@ Options:
 Examples:
     $0 release              # Build Release configuration
     $0 debug                # Build Debug configuration
+    $0 dmg                  # Create DMG for distribution
     $0 install              # Build and install to /Applications
     $0 archive              # Create archive for distribution
     $0 clean release        # Clean and build Release
@@ -287,6 +289,91 @@ verify_build() {
     fi
 }
 
+create_dmg() {
+    print_header "Creating DMG"
+
+    # Get version from Info.plist
+    local info_plist="./SideButtonFixer/Info.plist"
+    local version="1.0.6"
+
+    if [ -f "$info_plist" ]; then
+        version=$(plutil -extract CFBundleShortVersionString raw "$info_plist" 2>/dev/null || echo "1.0.6")
+    fi
+
+    local dmg_name="SensibleSideButtons-${version}.dmg"
+    local app_path="$BUILD_DIR/Release/$APP_NAME"
+
+    # Check if Release build exists
+    if [ ! -d "$app_path" ]; then
+        print_info "Release build not found. Building first..."
+        build_configuration "Release" false
+    fi
+
+    if [ ! -d "$app_path" ]; then
+        print_error "Failed to find or build Release app"
+        exit 1
+    fi
+
+    print_info "Creating DMG: $dmg_name"
+    print_info "Source: $app_path"
+
+    # Remove old DMG if exists
+    if [ -f "$BUILD_DIR/$dmg_name" ]; then
+        print_info "Removing old DMG..."
+        rm "$BUILD_DIR/$dmg_name"
+    fi
+
+    # Create temporary directory for DMG contents
+    local temp_dmg_dir=$(mktemp -d)
+    print_info "Preparing DMG contents..."
+
+    # Copy app to temp directory
+    cp -R "$app_path" "$temp_dmg_dir/"
+
+    # Create Applications symlink for easy installation
+    ln -s /Applications "$temp_dmg_dir/Applications"
+
+    print_info "Creating disk image..."
+
+    # Create DMG
+    hdiutil create -volname "SensibleSideButtons" \
+                   -srcfolder "$temp_dmg_dir" \
+                   -ov \
+                   -format UDZO \
+                   -imagekey zlib-level=9 \
+                   "$BUILD_DIR/$dmg_name" > /dev/null 2>&1
+
+    # Clean up temp directory
+    rm -rf "$temp_dmg_dir"
+
+    if [ -f "$BUILD_DIR/$dmg_name" ]; then
+        print_success "DMG created successfully"
+        print_info "Location: $BUILD_DIR/$dmg_name"
+
+        # Get DMG size
+        local dmg_size=$(du -h "$BUILD_DIR/$dmg_name" | cut -f1)
+        print_info "Size: $dmg_size"
+
+        echo ""
+        print_header "DMG Information"
+        echo "  Filename: $dmg_name"
+        echo "  Version: $version"
+        echo "  Location: $BUILD_DIR/$dmg_name"
+        echo "  Size: $dmg_size"
+        echo ""
+
+        print_info "To test the DMG:"
+        echo "  open '$BUILD_DIR/$dmg_name'"
+        echo ""
+
+        print_info "To verify the DMG:"
+        echo "  hdiutil verify '$BUILD_DIR/$dmg_name'"
+    else
+        print_error "Failed to create DMG"
+        exit 1
+    fi
+}
+
 show_output_locations() {
     print_header "Build Output Locations"
 
@@ -365,7 +452,7 @@ VERBOSE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        debug|release|clean|archive|install|verify|show|help)
+        debug|release|clean|archive|dmg|install|verify|show|help)
             COMMAND=$1
             shift
             ;;
@@ -421,6 +508,12 @@ case $COMMAND in
         fi
         create_archive
         verify_build
+        ;;
+    dmg)
+        if [ "$NO_CLEAN" = false ]; then
+            clean_build
+        fi
+        create_dmg
         ;;
     install)
         if [ "$NO_CLEAN" = false ]; then

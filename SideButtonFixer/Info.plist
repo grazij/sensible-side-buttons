@@ -32,5 +32,7 @@
 	<string>Main</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>SensibleSideButtons needs Accessibility permissions to remap your mouse side buttons to swipe gestures for navigation.</string>
 </dict>
 </plist>

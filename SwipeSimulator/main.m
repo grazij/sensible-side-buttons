@@ -28,7 +28,7 @@ int main(int argc, const char * argv[]) {
         // Initialize logger using bundle identifier (fallback for command-line tool)
         NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
         if (!bundleId) {
-            bundleId = @"swipe-simulator";
+            bundleId = @"sensible-side-buttons";
         }
         os_log_t logger = os_log_create([bundleId UTF8String], "default");
 #ifdef LEFT

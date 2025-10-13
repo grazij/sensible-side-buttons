@@ -46,6 +46,13 @@ Creates a distributable archive
 - Copies app to `./build/` directory
 - Runs verification automatically
 
+#### `./build.sh dmg`
+Creates a DMG disk image for distribution
+- Builds Release if needed
+- Creates compressed DMG with Applications symlink
+- Ready for distribution to users
+- Output: `./build/SensibleSideButtons-VERSION.dmg`
+
 #### `./build.sh install`
 Builds and installs to /Applications
 - Builds Release configuration
@@ -119,10 +126,15 @@ All builds now output to the local `./build` directory for easy access:
 
 ### Distribution Build
 ```bash
-# Create archive ready for distribution
+# Create DMG ready for distribution (recommended)
+./build.sh dmg
+
+# Output: ./build/SensibleSideButtons-VERSION.dmg
+
+# Or create archive
 ./build.sh archive
 
-# Output in: ./build/SensibleSideButtons.app
+# Output: ./build/Archive/SensibleSideButtons.xcarchive
 ```
 
 ### Install for Testing
