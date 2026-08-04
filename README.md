@@ -19,6 +19,14 @@ macOS mostly ignores the M4/M5 mouse buttons, commonly used for navigation. Thir
 
 Extensive information on this tweak can be found here: http://sensible-side-buttons.archagon.net
 
+## Accessibility permission
+
+SensibleSideButtons needs Accessibility permission to synthesize swipe gestures. macOS prompts for it the first time you enable the app. If no prompt appears, add it manually:
+
+1. Open System Settings (or System Preferences)
+1. Go to Privacy & Security > Accessibility
+1. Add SensibleSideButtons and turn it on
+
 ## Launch at login
 
 To ensure SensibleSideButtons opens whenever you start your computer:
