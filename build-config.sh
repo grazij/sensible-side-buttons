@@ -1,7 +1,7 @@
-#\!/bin/bash
+#!/usr/bin/env bash
 
 ################################################################################
-# Generic macOS Build System - Configuration Library  
+# Generic macOS Build System - Configuration Library
 ################################################################################
 
 # Color codes for output
@@ -30,7 +30,8 @@ print_debug() { [ "${DEBUG:-false}" = "true" ] && echo -e "${BLUE}[DEBUG] $1${NC
 # Configuration Loading
 ################################################################################
 
-export PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PROJECT_ROOT
 ENV_FILE="$PROJECT_ROOT/.env"
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -50,9 +51,21 @@ get_version() {
 }
 
 get_bundle_id() {
-    local bundle_id=$(plutil -extract CFBundleIdentifier raw "$PROJECT_ROOT/$INFO_PLIST_PATH" 2>/dev/null)
-    # If it contains variables like $(PRODUCT_BUNDLE_IDENTIFIER), return a simple default
-    if [[ "$bundle_id" == *'$('* ]]; then
+    # The source plist usually holds $(PRODUCT_BUNDLE_IDENTIFIER); the built
+    # app's Info.plist has it resolved. Prefer that, then the source plist,
+    # then a placeholder.
+    local bundle_id=""
+    local config built_plist
+    for config in Release Debug; do
+        built_plist="$(get_absolute_build_dir)/$config/$APP_NAME/Contents/Info.plist"
+        if [ -f "$built_plist" ]; then
+            bundle_id=$(plutil -extract CFBundleIdentifier raw "$built_plist" 2>/dev/null) && break
+        fi
+    done
+    if [ -z "$bundle_id" ]; then
+        bundle_id=$(plutil -extract CFBundleIdentifier raw "$PROJECT_ROOT/$INFO_PLIST_PATH" 2>/dev/null)
+    fi
+    if [ -z "$bundle_id" ] || [[ "$bundle_id" == *"\$("* ]]; then
         echo "com.${APP_NAME_NO_EXT:-app}"
     else
         echo "$bundle_id"
@@ -94,14 +107,6 @@ get_arch_flags() {
 ################################################################################
 # Code Signing
 ################################################################################
-
-get_dev_signing_identity() {
-    if [ -n "${DEV_SIGNING_IDENTITY:-}" ]; then
-        echo "$DEV_SIGNING_IDENTITY"
-        return
-    fi
-    security find-identity -v -p codesigning | grep "Apple Development" | head -1 | sed "s/.*\\\"\\(.*\\)\\\".*/\\1/"
-}
 
 get_dist_signing_identity() {
     if [ -n "${DIST_SIGNING_IDENTITY:-}" ]; then

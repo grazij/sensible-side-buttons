@@ -34,14 +34,15 @@ sign:
 dmg:
 	@./build.sh dmg
 
+# build.sh reads NOTARIZATION_KEYCHAIN_PROFILE from .env itself; make does not
 notarize:
-	@./build.sh notarize --keychain $${NOTARIZATION_KEYCHAIN_PROFILE}
+	@./build.sh notarize
 
 package:
-	@./build.sh package --keychain $${NOTARIZATION_KEYCHAIN_PROFILE}
+	@./build.sh package
 
 release-github:
-	@./release.sh
+	@./release-github.sh
 
 # Help target
 help:

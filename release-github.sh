@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 ################################################################################
 # Generic macOS Release Script
@@ -22,6 +22,9 @@ if ! command -v gh &> /dev/null; then
     exit 1
 fi
 
+# build-config.sh only defines getters; build.sh exports VERSION for itself,
+# so this script must resolve it too or the tag would be a bare "v".
+VERSION=$(get_version)
 DMG_PATH="$(get_dmg_path)"
 
 echo ""
@@ -74,18 +77,24 @@ fi
 
 # Create release notes
 print_info "Creating release notes..."
-RELEASE_NOTES_FILE="/tmp/${APP_NAME_NO_EXT}-release-${VERSION}.md"
+NOTES_DIR=$(mktemp -d "${TMPDIR:-/tmp}/release-notes.XXXXXX")
+trap 'rm -rf "$NOTES_DIR"' EXIT INT TERM
+RELEASE_NOTES_FILE="$NOTES_DIR/notes.md"
 
 # Get repo URL
 REPO_URL=$(get_github_repo_url)
 PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+# Minimum macOS comes from the built app, so it tracks the deployment target
+MIN_MACOS=$(plutil -extract LSMinimumSystemVersion raw \
+    "$(get_app_path Release)/Contents/Info.plist" 2>/dev/null || echo "")
 
 cat > "$RELEASE_NOTES_FILE" << EOF
 ## What's New in ${VERSION}
 
 ### Features
 - Universal binary support (Apple Silicon + Intel)
-- Notarized for seamless installation on macOS 10.15+
+- Notarized by Apple for installation without warnings
 
 ### Installation
 
@@ -94,15 +103,29 @@ cat > "$RELEASE_NOTES_FILE" << EOF
 2. Open the DMG
 3. Drag **${APP_NAME}** to your **Applications** folder
 4. Launch the app
+EOF
+
+# Homebrew block only when the project declares a tap and cask in .env
+if [ -n "${HOMEBREW_TAP:-}" ] && [ -n "${HOMEBREW_CASK:-}" ]; then
+    cat >> "$RELEASE_NOTES_FILE" << EOF
 
 #### Via Homebrew Cask
 \`\`\`bash
-brew tap ${GITHUB_OWNER}/tap
-brew install --cask ${APP_NAME_NO_EXT}
+brew tap ${HOMEBREW_TAP}
+brew install --cask ${HOMEBREW_CASK}
 \`\`\`
+EOF
+fi
+
+if [ -n "$MIN_MACOS" ]; then
+    cat >> "$RELEASE_NOTES_FILE" << EOF
 
 ## Requirements
-- **macOS 11.0 (Big Sur)** or later
+- **macOS ${MIN_MACOS}** or later
+EOF
+fi
+
+cat >> "$RELEASE_NOTES_FILE" << EOF
 
 ## Verification
 
@@ -134,7 +157,6 @@ read -p "Create release v${VERSION}? (y/N) " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     print_info "Release cancelled"
-    rm -f "$RELEASE_NOTES_FILE"
     exit 0
 fi
 
@@ -173,10 +195,14 @@ if [ $? -eq 0 ]; then
 
     print_header "Next Steps"
     echo ""
-    echo "1. Update Homebrew cask SHA256 in ${APP_NAME_NO_EXT}.rb:"
-    echo "   sha256 \"${SHA256}\""
-    echo ""
-    echo "2. Test download:"
+    if [ -n "${HOMEBREW_CASK:-}" ]; then
+        echo "1. Update Homebrew cask SHA256 in ${HOMEBREW_CASK}.rb:"
+        echo "   sha256 \"${SHA256}\""
+        echo ""
+        echo "2. Test download:"
+    else
+        echo "1. Test download:"
+    fi
     if [ -n "$REPO_URL" ]; then
         echo "   curl -L -o test.dmg ${REPO_URL}/releases/download/v${VERSION}/${APP_NAME_NO_EXT}-${VERSION}.dmg"
     fi
@@ -185,9 +211,6 @@ else
     print_error "Failed to create release"
     exit 1
 fi
-
-# Clean up
-rm -f "$RELEASE_NOTES_FILE"
 
 echo ""
 print_success "Done!"

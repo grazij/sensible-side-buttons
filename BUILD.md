@@ -52,7 +52,7 @@ If `.env` doesn't exist:
 
 ```bash
 cp .env.example .env
-# Edit .env with your settings (already done for this project)
+# Edit .env with your settings
 ```
 
 ---
@@ -87,6 +87,8 @@ Signs the app with Developer ID for distribution
 - Auto-detects "Developer ID Application" certificate
 - Applies hardened runtime
 - Adds secure timestamp
+- Carries over the entitlements from the Xcode build, minus `get-task-allow`
+- Does not use `--deep`; nested frameworks or helpers must already be signed
 - Required before notarization
 
 #### `./build.sh dmg`
@@ -108,7 +110,7 @@ Notarizes the DMG with Apple
 - `--apple-id EMAIL` - Apple ID email
 - `--team-id TEAM_ID` - Apple Developer Team ID
 - `--password PASSWORD` - App-specific password
-- `--wait` - Wait for notarization to complete (default)
+- `--app` - Notarize the app bundle (zipped) instead of the DMG
 
 **Examples:**
 ```bash
@@ -123,7 +125,7 @@ Notarizes the DMG with Apple
 ```bash
 xcrun notarytool store-credentials "$NOTARIZATION_KEYCHAIN_PROFILE" \
   --apple-id "your-email@example.com" \
-  --team-id "7DLRYPB8WK"
+  --team-id "<TEAM_ID>"
 ```
 
 #### `./build.sh package`
@@ -241,7 +243,7 @@ make package
 ### Create GitHub Release
 ```bash
 # After creating and notarizing the DMG:
-./release.sh
+./release-github.sh
 
 # This will:
 # - Read version from Info.plist
@@ -463,7 +465,7 @@ Before distributing the app:
 
 4. **Create GitHub release**
    ```bash
-   ./release.sh
+   ./release-github.sh
    ```
 
    This automatically:
@@ -475,7 +477,7 @@ Before distributing the app:
    - Calculates SHA256 for Homebrew
 
 5. **Update Homebrew cask** (optional)
-   - Use the SHA256 from release.sh output
+   - Use the SHA256 from release-github.sh output
    - Submit PR to homebrew-cask
 
 ---
@@ -487,9 +489,10 @@ This build system is **generic and reusable**. To adapt it to another macOS proj
 1. Copy these files to your project:
    - `build-config.sh`
    - `build.sh`
-   - `release.sh`
+   - `release-github.sh`
    - `Makefile`
    - `.env.example`
+   - the `build/` and `.env` lines from `.gitignore`
 
 2. Create `.env` from the template:
    ```bash
@@ -509,21 +512,16 @@ This build system is **generic and reusable**. To adapt it to another macOS proj
    ./build.sh release
    ```
 
-Everything adapts automatically! See **GENERIC-BUILD-SYSTEM.md** and **EXAMPLE-ADAPTATION.md** for complete details.
+See **BUILD_SYSTEM.md** for the full contract (configuration variables,
+function API, exact tool invocations, Xcode preconditions, and a
+step-by-step adaptation procedure).
 
 ---
 
 ## Support
 
 For issues or questions:
-- **Generic build system**: See GENERIC-BUILD-SYSTEM.md
-- **Adaptation guide**: See EXAMPLE-ADAPTATION.md
+- **Build system internals**: See BUILD_SYSTEM.md
 - **Configuration options**: See .env.example
-- **Quick reference**: See QUICK-START.md
 - **Project-specific**: Check the main README.md
 - **GitHub issues**: https://github.com/grazij/sensible-side-buttons/issues
-
----
-
-**Build System Version:** 1.0
-**Last Updated:** October 2025

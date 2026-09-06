@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 ################################################################################
 # Generic macOS Build Script
@@ -14,12 +14,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/build-config.sh"
 
 # Initialize version variables
-export VERSION=$(get_version)
-export BUNDLE_ID=$(get_bundle_id)
-export BUILD_NUMBER=$(get_build_number)
+VERSION=$(get_version)
+export VERSION
+BUNDLE_ID=$(get_bundle_id)
+export BUNDLE_ID
+BUILD_NUMBER=$(get_build_number)
+export BUILD_NUMBER
 
 # Ensure BUILD_DIR is absolute
-export BUILD_DIR="$(get_absolute_build_dir)"
+BUILD_DIR="$(get_absolute_build_dir)"
+export BUILD_DIR
 
 ################################################################################
 # Usage
@@ -103,7 +107,13 @@ build_configuration() {
     print_info "Output: $build_output"
 
     # Get architecture flags
-    local arch_flags=$(get_arch_flags)
+    local arch_flags
+    arch_flags=$(get_arch_flags)
+
+    # Capture xcodebuild's own status. Piping into grep would report grep's
+    # status, and a failed build with no "error:" line would look successful.
+    local rc=0
+    local build_log="$BUILD_DIR/xcodebuild-$config.log"
 
     if [ "$verbose" = true ]; then
         xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
@@ -112,7 +122,7 @@ build_configuration() {
                    $arch_flags \
                    ONLY_ACTIVE_ARCH=NO \
                    CONFIGURATION_BUILD_DIR="$build_output" \
-                   build
+                   build || rc=$?
     else
         xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
                    -scheme "$SCHEME_NAME" \
@@ -120,13 +130,16 @@ build_configuration() {
                    $arch_flags \
                    ONLY_ACTIVE_ARCH=NO \
                    CONFIGURATION_BUILD_DIR="$build_output" \
-                   build 2>&1 | grep -E "(BUILD|error:|warning:)" || true
+                   build > "$build_log" 2>&1 || rc=$?
+        grep -E "(BUILD|error:|warning:)" "$build_log" || true
+        [ "$rc" -eq 0 ] || print_info "Full log: $build_log"
     fi
 
-    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+    if [ "$rc" -eq 0 ]; then
         print_success "$config build completed successfully"
 
-        local app_path="$(get_app_path "$config")"
+        local app_path
+        app_path="$(get_app_path "$config")"
 
         if [ -d "$app_path" ]; then
             print_info "Build location: $app_path"
@@ -134,7 +147,8 @@ build_configuration() {
             # Verify architectures
             local binary_path="$app_path/Contents/MacOS/$APP_NAME_NO_EXT"
             if [ -f "$binary_path" ]; then
-                local size=$(du -h "$binary_path" | cut -f1)
+                local size
+                size=$(du -h "$binary_path" | cut -f1)
                 print_info "Binary size: $size"
 
                 echo ""
@@ -160,7 +174,8 @@ build_configuration() {
 sign_for_distribution() {
     print_header "Signing for Distribution"
 
-    local app_path="$(get_app_path Release)"
+    local app_path
+    app_path="$(get_app_path Release)"
 
     if [ ! -d "$app_path" ]; then
         print_error "Release build not found at $app_path"
@@ -170,31 +185,52 @@ sign_for_distribution() {
 
     # Find Developer ID certificate
     print_info "Looking for Developer ID Application certificate..."
-    local dev_id_cert=$(get_dist_signing_identity)
+    local dev_id_cert
+    dev_id_cert=$(get_dist_signing_identity)
 
     if [ -z "$dev_id_cert" ]; then
         print_error "No Developer ID Application certificate found!"
         echo ""
         echo "Create certificate in Xcode > Settings > Accounts > Manage Certificates"
-        echo "Or see SIGNING-FOR-NOTARIZATION.md for detailed instructions"
         exit 1
     fi
 
     print_success "Found certificate: $dev_id_cert"
     echo ""
 
+    # Re-signing with --force drops the entitlements Xcode embedded. Carry
+    # them over, minus get-task-allow, which Xcode adds for debugging and
+    # notarization rejects.
+    local ent_dir
+    ent_dir=$(mktemp -d "${TMPDIR:-/tmp}/build-sign.XXXXXX")
+    local ent_file="$ent_dir/entitlements.plist"
+    codesign -d --entitlements - --xml "$app_path" > "$ent_file" 2>/dev/null || true
+    if [ -s "$ent_file" ]; then
+        # plutil key paths split on ".", so the dots must be escaped
+        plutil -remove 'com\.apple\.security\.get-task-allow' "$ent_file" > /dev/null 2>&1 || true
+    fi
+    set -- --force --verify --verbose \
+        --sign "$dev_id_cert" \
+        --options runtime \
+        --timestamp
+    if [ -s "$ent_file" ] && grep -q "<key>" "$ent_file"; then
+        set -- "$@" --entitlements "$ent_file"
+        print_info "  - Entitlements preserved from Xcode build"
+    fi
+
     print_info "Signing with Developer ID for distribution..."
     print_info "  - Hardened runtime enabled"
     print_info "  - Secure timestamp enabled"
     echo ""
 
-    codesign --deep --force --verify --verbose \
-        --sign "$dev_id_cert" \
-        --options runtime \
-        --timestamp \
-        "$app_path" 2>&1 | grep -E "(replacing|signed)" || true
+    # --deep is deliberately not used: Apple discourages it. Nested code
+    # (frameworks, helpers) must be signed inside-out before this step.
+    local rc=0
+    codesign "$@" "$app_path" 2>&1 | grep -E "(replacing|signed)" || true
+    codesign --verify --strict "$app_path" || rc=$?
+    rm -rf "$ent_dir"
 
-    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+    if [ "$rc" -eq 0 ]; then
         print_success "Successfully signed for distribution"
         echo ""
 
@@ -216,8 +252,10 @@ sign_for_distribution() {
 create_dmg() {
     print_header "Creating DMG"
 
-    local dmg_path="$(get_dmg_path)"
-    local app_path="$(get_app_path Release)"
+    local dmg_path
+    dmg_path="$(get_dmg_path)"
+    local app_path
+    app_path="$(get_app_path Release)"
 
     # Check if Release build exists
     if [ ! -d "$app_path" ]; then
@@ -240,7 +278,8 @@ create_dmg() {
     fi
 
     # Create temporary directory for DMG contents
-    local temp_dmg_dir=$(mktemp -d)
+    local temp_dmg_dir
+    temp_dmg_dir=$(mktemp -d)
     print_info "Preparing DMG contents..."
 
     cp -R "$app_path" "$temp_dmg_dir/"
@@ -248,7 +287,8 @@ create_dmg() {
 
     print_info "Creating disk image..."
 
-    local dmg_volume_name=$(get_dmg_volume_name)
+    local dmg_volume_name
+    dmg_volume_name=$(get_dmg_volume_name)
     hdiutil create -volname "$dmg_volume_name" \
                    -srcfolder "$temp_dmg_dir" \
                    -ov \
@@ -262,7 +302,8 @@ create_dmg() {
         print_success "DMG created successfully"
         print_info "Location: $dmg_path"
 
-        local dmg_size=$(du -h "$dmg_path" | cut -f1)
+        local dmg_size
+        dmg_size=$(du -h "$dmg_path" | cut -f1)
         print_info "Size: $dmg_size"
 
         echo ""
@@ -315,7 +356,8 @@ notarize_build() {
             exit 1
         fi
         # Create ZIP for notarization
-        local zip_path="$BUILD_DIR/$(get_app_name_no_ext)-notarize.zip"
+        local zip_path
+        zip_path="$BUILD_DIR/$(get_app_name_no_ext)-notarize.zip"
         print_info "Creating ZIP for notarization..."
         ditto -c -k --keepParent "$file_to_notarize" "$zip_path"
         file_to_notarize="$zip_path"
@@ -338,23 +380,24 @@ notarize_build() {
         exit 1
     fi
 
-    # Build notarytool command
-    local notarytool_cmd="xcrun notarytool submit \"$file_to_notarize\""
+    # Build the argument list with set -- so a password containing quotes,
+    # spaces, or globs is passed intact and never re-parsed by eval.
+    set -- submit "$file_to_notarize"
 
     if [ -n "$keychain_profile" ]; then
         print_info "Using keychain profile: $keychain_profile"
-        notarytool_cmd="$notarytool_cmd --keychain-profile \"$keychain_profile\""
+        set -- "$@" --keychain-profile "$keychain_profile"
     else
-        notarytool_cmd="$notarytool_cmd --apple-id \"$apple_id\" --team-id \"$team_id\" --password \"$password\""
+        set -- "$@" --apple-id "$apple_id" --team-id "$team_id" --password "$password"
     fi
 
-    notarytool_cmd="$notarytool_cmd --wait"
+    set -- "$@" --wait
 
     print_info "Submitting for notarization..."
     echo ""
 
-    eval $notarytool_cmd
-    local result=$?
+    local result=0
+    xcrun notarytool "$@" || result=$?
 
     echo ""
 
@@ -387,7 +430,8 @@ notarize_build() {
 verify_build() {
     print_header "Verifying Build"
 
-    local app_path="$(get_app_path Release)"
+    local app_path
+    app_path="$(get_app_path Release)"
     [ ! -d "$app_path" ] && app_path="$(get_app_path Debug)"
 
     if [ ! -d "$app_path" ]; then
@@ -431,7 +475,8 @@ install_app() {
 
     build_configuration "Release" false
 
-    local built_app="$(get_app_path Release)"
+    local built_app
+    built_app="$(get_app_path Release)"
 
     if [ ! -d "$built_app" ]; then
         print_error "Could not find built application"
@@ -473,7 +518,8 @@ show_output_locations() {
         echo ""
     fi
 
-    local dmg_path="$(get_dmg_path)"
+    local dmg_path
+    dmg_path="$(get_dmg_path)"
     if [ -f "$dmg_path" ]; then
         print_success "DMG Found"
         echo "  $dmg_path"
@@ -503,7 +549,8 @@ create_archive() {
 
     print_info "Creating archive..."
 
-    local arch_flags=$(get_arch_flags)
+    local arch_flags
+    arch_flags=$(get_arch_flags)
 
     xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
                -scheme "$SCHEME_NAME" \
