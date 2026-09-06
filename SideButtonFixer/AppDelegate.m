@@ -28,6 +28,7 @@ static os_log_t logger;
 // Cached preferences to avoid reading NSUserDefaults in the hot path
 static BOOL cachedMouseDown = YES;
 static BOOL cachedSwapButtons = NO;
+static BOOL cachedWheelClick = NO;
 
 static NSMutableDictionary<NSNumber*, NSArray<NSDictionary*>*>* swipeInfo = nil;
 static NSArray* nullArray = nil;
@@ -43,6 +44,27 @@ static void SBFFakeSwipe(TLInfoSwipeDirection dir) {
     CFRelease(event2);
 }
 
+// Mission Control is driven by the Dock from raw trackpad data, not from app-level
+// swipe events, so a synthesized swipe up cannot open it. Launch the system's
+// Mission Control app instead, which toggles it exactly like the F3 key.
+static void SBFToggleMissionControl(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSWorkspace* workspace = [NSWorkspace sharedWorkspace];
+        NSURL* url = [workspace URLForApplicationWithBundleIdentifier:@"com.apple.exposelauncher"];
+        if (url == nil) {
+            os_log_error(logger ?: OS_LOG_DEFAULT, "Mission Control app not found");
+            return;
+        }
+        NSWorkspaceOpenConfiguration* config = [NSWorkspaceOpenConfiguration configuration];
+        config.activates = NO;
+        [workspace openApplicationAtURL:url configuration:config completionHandler:^(NSRunningApplication* app, NSError* error) {
+            if (error) {
+                os_log_error(logger ?: OS_LOG_DEFAULT, "Failed to open Mission Control: %{public}@", error);
+            }
+        }];
+    });
+}
+
 static CGEventRef SBFMouseCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
     int64_t number = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
     BOOL down = (CGEventGetType(event) == kCGEventOtherMouseDown);
@@ -50,11 +72,19 @@ static CGEventRef SBFMouseCallback(CGEventTapProxy proxy, CGEventType type, CGEv
     // Use cached preferences instead of reading NSUserDefaults on hot path
     BOOL mouseDown = cachedMouseDown;
     BOOL swapButtons = cachedSwapButtons;
+    BOOL wheelClick = cachedWheelClick;
 
-    // M3 button (button 2) - just log when detected
+    // M3 button (button 2) - optionally toggle Mission Control, otherwise pass through
     if (number == 2) {
-        os_log_debug(logger ?: OS_LOG_DEFAULT, "M3 button detected (button 2)");
-        return event;
+        if (!wheelClick) {
+            os_log_debug(logger ?: OS_LOG_DEFAULT, "M3 button detected (button 2) - passing through");
+            return event;
+        }
+        os_log_debug(logger ?: OS_LOG_DEFAULT, "M3 button - toggling Mission Control");
+        if ((mouseDown && down) || (!mouseDown && !down)) {
+            SBFToggleMissionControl();
+        }
+        return NULL;
     }
     else if (number == (swapButtons ? 4 : 3)) {
         os_log_debug(logger ?: OS_LOG_DEFAULT, "Back button - triggering swipe left");
@@ -87,6 +117,7 @@ typedef NS_ENUM(NSInteger, MenuItem) {
     MenuItemEnabledSeparator,
     MenuItemTriggerOnMouseDown,
     MenuItemSwapButtons,
+    MenuItemWheelClick,
     MenuItemOptionsSeparator,
     MenuItemStartupHide,
     MenuItemStartupHideInfo,
@@ -118,7 +149,8 @@ typedef NS_ENUM(NSInteger, MenuItem) {
 -(void) updateCachedPreferences {
     cachedMouseDown = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFMouseDown"];
     cachedSwapButtons = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFSwapButtons"];
-    os_log_debug(logger ?: OS_LOG_DEFAULT, "Preferences cached - mouseDown: %d, swapButtons: %d", cachedMouseDown, cachedSwapButtons);
+    cachedWheelClick = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFWheelClick"];
+    os_log_debug(logger ?: OS_LOG_DEFAULT, "Preferences cached - mouseDown: %d, swapButtons: %d, wheelClick: %d", cachedMouseDown, cachedSwapButtons, cachedWheelClick);
 }
 
 -(void) dealloc {
@@ -161,7 +193,8 @@ typedef NS_ENUM(NSInteger, MenuItem) {
                                                               @"SBFWasEnabled": @YES,
                                                               @"SBFMouseDown": @YES,
                                                               @"SBFDonated": @NO,
-                                                              @"SBFSwapButtons": @NO
+                                                              @"SBFSwapButtons": @NO,
+                                                              @"SBFWheelClick": @NO
                                                               }];
 
     // Cache preferences to avoid repeated NSUserDefaults reads in the hot path
@@ -217,6 +250,11 @@ typedef NS_ENUM(NSInteger, MenuItem) {
         swapItem.state = NSControlStateValueOff;
         [menu addItem:swapItem];
         assert(menu.itemArray.count - 1 == MenuItemSwapButtons);
+
+        NSMenuItem* wheelItem = [[NSMenuItem alloc] initWithTitle:@"Wheel Click Opens Mission Control" action:@selector(wheelClickToggle:) keyEquivalent:@""];
+        wheelItem.state = NSControlStateValueOff;
+        [menu addItem:wheelItem];
+        assert(menu.itemArray.count - 1 == MenuItemWheelClick);
 
         [menu addItem:[NSMenuItem separatorItem]];
         assert(menu.itemArray.count - 1 == MenuItemOptionsSeparator);
@@ -300,12 +338,14 @@ typedef NS_ENUM(NSInteger, MenuItem) {
     self.statusItem.menu.itemArray[MenuItemEnabled].state = self.tap != NULL && CGEventTapIsEnabled(self.tap);
     self.statusItem.menu.itemArray[MenuItemTriggerOnMouseDown].state = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFMouseDown"];
     self.statusItem.menu.itemArray[MenuItemSwapButtons].state = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFSwapButtons"];
+    self.statusItem.menu.itemArray[MenuItemWheelClick].state = [[NSUserDefaults standardUserDefaults] boolForKey:@"SBFWheelClick"];
 
     switch (self.menuMode) {
         case MenuModeAccessibility:
             self.statusItem.menu.itemArray[MenuItemEnabled].enabled = NO;
             self.statusItem.menu.itemArray[MenuItemTriggerOnMouseDown].enabled = NO;
             self.statusItem.menu.itemArray[MenuItemSwapButtons].enabled = NO;
+            self.statusItem.menu.itemArray[MenuItemWheelClick].enabled = NO;
             self.statusItem.menu.itemArray[MenuItemDonate].hidden = YES;
             self.statusItem.menu.itemArray[MenuItemWebsite].hidden = NO;
             self.statusItem.menu.itemArray[MenuItemAccessibility].hidden = NO;
@@ -314,6 +354,7 @@ typedef NS_ENUM(NSInteger, MenuItem) {
             self.statusItem.menu.itemArray[MenuItemEnabled].enabled = YES;
             self.statusItem.menu.itemArray[MenuItemTriggerOnMouseDown].enabled = YES;
             self.statusItem.menu.itemArray[MenuItemSwapButtons].enabled = YES;
+            self.statusItem.menu.itemArray[MenuItemWheelClick].enabled = YES;
             self.statusItem.menu.itemArray[MenuItemDonate].hidden = NO;
             self.statusItem.menu.itemArray[MenuItemWebsite].hidden = YES;
             self.statusItem.menu.itemArray[MenuItemAccessibility].hidden = YES;
@@ -322,6 +363,7 @@ typedef NS_ENUM(NSInteger, MenuItem) {
             self.statusItem.menu.itemArray[MenuItemEnabled].enabled = YES;
             self.statusItem.menu.itemArray[MenuItemTriggerOnMouseDown].enabled = YES;
             self.statusItem.menu.itemArray[MenuItemSwapButtons].enabled = YES;
+            self.statusItem.menu.itemArray[MenuItemWheelClick].enabled = YES;
             self.statusItem.menu.itemArray[MenuItemDonate].hidden = YES;
             self.statusItem.menu.itemArray[MenuItemWebsite].hidden = NO;
             self.statusItem.menu.itemArray[MenuItemAccessibility].hidden = YES;
@@ -400,6 +442,12 @@ typedef NS_ENUM(NSInteger, MenuItem) {
 
 -(void) swapToggle:(id)sender {
     [[NSUserDefaults standardUserDefaults] setBool:![[NSUserDefaults standardUserDefaults] boolForKey:@"SBFSwapButtons"] forKey:@"SBFSwapButtons"];
+    [self updateCachedPreferences];
+    [self refreshSettings];
+}
+
+-(void) wheelClickToggle:(id)sender {
+    [[NSUserDefaults standardUserDefaults] setBool:![[NSUserDefaults standardUserDefaults] boolForKey:@"SBFWheelClick"] forKey:@"SBFWheelClick"];
     [self updateCachedPreferences];
     [self refreshSettings];
 }
