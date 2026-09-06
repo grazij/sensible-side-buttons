@@ -106,9 +106,18 @@ build_configuration() {
     print_info "Building universal binary ($BUILD_ARCHS)..."
     print_info "Output: $build_output"
 
-    # Get architecture flags
-    local arch_flags
-    arch_flags=$(get_arch_flags)
+    # Build the xcodebuild argument list with set -- so each -arch is its
+    # own word without an unquoted expansion.
+    set -- -project "${PROJECT_NAME}.xcodeproj" \
+           -scheme "$SCHEME_NAME" \
+           -configuration "$config"
+    local arch
+    for arch in $BUILD_ARCHS; do
+        set -- "$@" -arch "$arch"
+    done
+    set -- "$@" ONLY_ACTIVE_ARCH=NO \
+                CONFIGURATION_BUILD_DIR="$build_output" \
+                build
 
     # Capture xcodebuild's own status. Piping into grep would report grep's
     # status, and a failed build with no "error:" line would look successful.
@@ -116,21 +125,9 @@ build_configuration() {
     local build_log="$BUILD_DIR/xcodebuild-$config.log"
 
     if [ "$verbose" = true ]; then
-        xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
-                   -scheme "$SCHEME_NAME" \
-                   -configuration "$config" \
-                   $arch_flags \
-                   ONLY_ACTIVE_ARCH=NO \
-                   CONFIGURATION_BUILD_DIR="$build_output" \
-                   build || rc=$?
+        xcodebuild "$@" || rc=$?
     else
-        xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
-                   -scheme "$SCHEME_NAME" \
-                   -configuration "$config" \
-                   $arch_flags \
-                   ONLY_ACTIVE_ARCH=NO \
-                   CONFIGURATION_BUILD_DIR="$build_output" \
-                   build > "$build_log" 2>&1 || rc=$?
+        xcodebuild "$@" > "$build_log" 2>&1 || rc=$?
         grep -E "(BUILD|error:|warning:)" "$build_log" || true
         [ "$rc" -eq 0 ] || print_info "Full log: $build_log"
     fi
@@ -549,17 +546,18 @@ create_archive() {
 
     print_info "Creating archive..."
 
-    local arch_flags
-    arch_flags=$(get_arch_flags)
+    set -- -project "${PROJECT_NAME}.xcodeproj" \
+           -scheme "$SCHEME_NAME" \
+           -configuration Release
+    local arch
+    for arch in $BUILD_ARCHS; do
+        set -- "$@" -arch "$arch"
+    done
+    set -- "$@" ONLY_ACTIVE_ARCH=NO \
+                archive \
+                -archivePath "$archive_path"
 
-    xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
-               -scheme "$SCHEME_NAME" \
-               -configuration Release \
-               $arch_flags \
-               ONLY_ACTIVE_ARCH=NO \
-               archive \
-               -archivePath "$archive_path" \
-               | grep -E "(BUILD|ARCHIVE|error:|warning:)" || true
+    xcodebuild "$@" | grep -E "(BUILD|ARCHIVE|error:|warning:)" || true
 
     if [ -d "$archive_path" ]; then
         print_success "Archive created successfully"

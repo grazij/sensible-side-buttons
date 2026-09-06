@@ -96,14 +96,6 @@ get_absolute_build_dir() {
     fi
 }
 
-get_arch_flags() {
-    local flags=""
-    for arch in $BUILD_ARCHS; do
-        flags="$flags -arch $arch"
-    done
-    echo "$flags"
-}
-
 ################################################################################
 # Code Signing
 ################################################################################
