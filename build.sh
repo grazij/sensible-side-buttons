@@ -309,6 +309,30 @@ sign_for_distribution() {
     fi
 }
 
+# Sign the disk image with the same Developer ID used for the app.
+#
+# hdiutil emits an unsigned image, and notarizing plus stapling it does not add
+# a signature: `spctl -a -t open` still reports "no usable signature". Signing
+# it before submission is what makes the downloaded DMG itself assessable.
+sign_dmg() {
+    print_header "Signing DMG"
+
+    local dmg_path identity
+    dmg_path="$(get_dmg_path)"
+    identity="$(get_dist_signing_identity)"
+
+    if [ ! -f "$dmg_path" ]; then
+        print_error "DMG not found: $dmg_path"
+        exit 1
+    fi
+
+    print_info "Identity: $identity"
+    codesign --force --sign "$identity" --timestamp "$dmg_path"
+    codesign --verify --strict "$dmg_path"
+    print_success "DMG signed"
+    echo ""
+}
+
 create_dmg() {
     print_header "Creating DMG"
 
@@ -738,7 +762,15 @@ case $COMMAND in
         [ "$NO_CLEAN" = false ] && clean_build
         build_configuration "Release" $VERBOSE
         sign_for_distribution
+        # Notarize the app first and staple the ticket to it, so the .app is
+        # self-sufficient once Homebrew copies it out of the DMG. Stapling only
+        # the DMG leaves the app relying on an online check with Apple, which
+        # fails on a machine that is offline or behind a filtered network.
+        notarize_build --app "${NOTARIZE_ARGS[@]}"
+        # Build the DMG from the now-stapled app, then sign it: an unsigned DMG
+        # is rejected by spctl even after its own ticket is stapled.
         create_dmg
+        sign_dmg
         notarize_build "${NOTARIZE_ARGS[@]}"
         ;;
     install)
