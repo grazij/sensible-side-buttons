@@ -168,6 +168,64 @@ build_configuration() {
     fi
 }
 
+# Sign the nested code listed in NESTED_CODE_PATHS, in the order given.
+#
+# codesign seals a bundle by hashing everything inside it, so anything nested
+# must already carry its final signature when the enclosing bundle is signed.
+# Signing outside-in, or signing only the app, leaves the inner Mach-O files
+# with whatever signature the vendor shipped — for Sparkle that is an ad-hoc
+# one, which notarization rejects with "The signature of the binary is invalid"
+# for each of Autoupdate, Updater.app, Downloader.xpc and Installer.xpc.
+#
+# --deep is not the fix. Apple documents it as unsuitable for distribution: it
+# applies the app's own entitlements and identifier rules to nested code and
+# cannot express per-item options. The supported answer is an explicit
+# inside-out list, which is what NESTED_CODE_PATHS is.
+#
+# --preserve-metadata=entitlements keeps each helper's own entitlements, which
+# --force would otherwise drop. Sparkle's Downloader.xpc needs its network
+# entitlement; Installer.xpc ships with none and must stay unsandboxed, so
+# preserving "nothing" is correct there too.
+sign_nested_code() {
+    local app_path="$1"
+    local identity="$2"
+
+    if [ -z "${NESTED_CODE_PATHS:-}" ]; then
+        # An empty list is only legitimate for an app that embeds no code. If
+        # Frameworks/ exists, the vendored bundles are still ad-hoc signed and
+        # notarization will reject every one of them -- after a full build, a
+        # DMG and an upload. Fail here instead, where the cause is obvious.
+        if [ -d "$app_path/Contents/Frameworks" ]; then
+            print_error "NESTED_CODE_PATHS is empty but $APP_NAME embeds frameworks"
+            print_info "List them innermost-first in .env; see .env.example"
+            ls "$app_path/Contents/Frameworks"
+            exit 1
+        fi
+        return 0
+    fi
+
+    print_info "Signing nested code (inside-out)..."
+    local rel abs
+    # Unquoted on purpose, to word-split the list; same pattern as BUILD_ARCHS.
+    for rel in $NESTED_CODE_PATHS; do
+        abs="$app_path/$rel"
+        if [ ! -e "$abs" ]; then
+            print_error "Nested code path not found: $rel"
+            print_info "Fix NESTED_CODE_PATHS in .env, or the app layout changed"
+            exit 1
+        fi
+        print_info "  $rel"
+        codesign --force \
+                 --sign "$identity" \
+                 --options runtime \
+                 --timestamp \
+                 --preserve-metadata=entitlements \
+                 "$abs" 2>&1 | grep -E "(replacing|signed)" || true
+    done
+    print_success "Nested code signed"
+    echo ""
+}
+
 sign_for_distribution() {
     print_header "Signing for Distribution"
 
@@ -222,9 +280,14 @@ sign_for_distribution() {
 
     # --deep is deliberately not used: Apple discourages it. Nested code
     # (frameworks, helpers) must be signed inside-out before this step.
+    sign_nested_code "$app_path" "$dev_id_cert"
+
     local rc=0
     codesign "$@" "$app_path" 2>&1 | grep -E "(replacing|signed)" || true
-    codesign --verify --strict "$app_path" || rc=$?
+    # --deep on *verify* is correct and wanted: it walks the nested code that
+    # sign_nested_code just signed. It is only --deep on *signing* that Apple
+    # warns against.
+    codesign --verify --deep --strict "$app_path" || rc=$?
     rm -rf "$ent_dir"
 
     if [ "$rc" -eq 0 ]; then
@@ -393,8 +456,26 @@ notarize_build() {
     print_info "Submitting for notarization..."
     echo ""
 
-    local result=0
-    xcrun notarytool "$@" || result=$?
+    # notarytool exits 0 as long as the *submission* succeeded, even when the
+    # verdict is Invalid -- so the exit status alone would report a rejected
+    # build as notarized, and stapling would then fail with a confusing
+    # "Record not found". Read the verdict out of the output as well.
+    local result=0 submit_log
+    submit_log="$BUILD_DIR/notarytool-submit.log"
+    set -o pipefail
+    xcrun notarytool "$@" 2>&1 | tee "$submit_log" || result=$?
+    set +o pipefail
+
+    if [ $result -eq 0 ] && ! grep -q "status: Accepted" "$submit_log"; then
+        result=1
+        print_error "Notarization was rejected by Apple"
+        local submission_id
+        submission_id=$(grep -m1 "  id: " "$submit_log" | awk '{print $2}')
+        if [ -n "$submission_id" ]; then
+            print_info "Read the rejection with:"
+            echo "  xcrun notarytool log $submission_id --keychain-profile ${keychain_profile:-PROFILE}"
+        fi
+    fi
 
     echo ""
 
