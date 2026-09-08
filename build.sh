@@ -13,9 +13,12 @@ set -e  # Exit on error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/build-config.sh"
 
-# Initialize version variables
-VERSION=$(get_version)
-export VERSION
+# The version lives in the MARKETING_VERSION build setting, so get_version has
+# to read it back out of the built app. A snapshot taken here would be the
+# *previous* build's version — or 0.0.1 on a clean tree — and every display
+# below would then disagree with the DMG the same run produces. Re-read it at
+# each use instead; the getter is cheap and always current.
+version_now() { get_version; }
 BUNDLE_ID=$(get_bundle_id)
 export BUNDLE_ID
 BUILD_NUMBER=$(get_build_number)
@@ -67,7 +70,7 @@ Examples:
 Configuration:
     Project settings loaded from .env
     Current project: $PROJECT_NAME
-    Version: $VERSION
+    Version: $(version_now)
 
 EOF
 }
@@ -117,6 +120,7 @@ build_configuration() {
     done
     set -- "$@" ONLY_ACTIVE_ARCH=NO \
                 CONFIGURATION_BUILD_DIR="$build_output" \
+                -allowProvisioningUpdates \
                 build
 
     # Capture xcodebuild's own status. Piping into grep would report grep's
@@ -393,7 +397,7 @@ create_dmg() {
         echo ""
         print_header "DMG Information"
         echo "  Filename: $(basename "$dmg_path")"
-        echo "  Version: $VERSION"
+        echo "  Version: $(version_now)"
         echo "  Location: $dmg_path"
         echo "  Size: $dmg_size"
         echo ""
@@ -568,7 +572,7 @@ verify_build() {
 
     print_info "Bundle Information:"
     echo "  Bundle ID: $BUNDLE_ID"
-    echo "  Version: $VERSION"
+    echo "  Version: $(version_now)"
     echo "  Build: $BUILD_NUMBER"
 }
 
@@ -638,7 +642,7 @@ show_output_locations() {
     if [ -d "/Applications/$APP_NAME" ]; then
         print_success "Installed Version"
         echo "  /Applications/$APP_NAME"
-        echo "  Version: $VERSION"
+        echo "  Version: $(version_now)"
         echo ""
     fi
 }
@@ -724,7 +728,7 @@ done
 
 # Show header
 echo ""
-print_header "Build Script - $APP_NAME_NO_EXT v$VERSION"
+print_header "Build Script - $APP_NAME_NO_EXT v$(version_now)"
 echo ""
 
 # Execute command

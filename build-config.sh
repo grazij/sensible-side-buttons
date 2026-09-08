@@ -46,8 +46,49 @@ set -a && source "$ENV_FILE" && set +a
 # Project Information
 ################################################################################
 
+# Read a version-ish key, preferring the source Info.plist and falling back to
+# the built app's resolved one.
+#
+# The source plist is authoritative wherever it actually carries the key: it is
+# the file a human edits, and it is right even when build/ holds a stale or
+# half-finished build. But a target with GENERATE_INFOPLIST_FILE = YES keeps the
+# version in the MARKETING_VERSION / CURRENT_PROJECT_VERSION build settings and
+# injects it at build time, so its source plist has no such key and a bare read
+# yields the placeholder — which would name the DMG and the git tag after a
+# version that does not exist. Hence: source first, built app second, and treat
+# an unexpanded $(…) reference as absent in both.
+_plist_value() {
+    local key="$1"
+    local value="" config candidate
+
+    value=$(plutil -extract "$key" raw "$PROJECT_ROOT/$INFO_PLIST_PATH" 2>/dev/null)
+    if _plist_value_is_literal "$value"; then
+        echo "$value"
+        return 0
+    fi
+
+    for config in Release Debug; do
+        candidate="$(get_absolute_build_dir)/$config/$APP_NAME/Contents/Info.plist"
+        [ -f "$candidate" ] || continue
+        value=$(plutil -extract "$key" raw "$candidate" 2>/dev/null) || continue
+        if _plist_value_is_literal "$value"; then
+            echo "$value"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+_plist_value_is_literal() {
+    case "$1" in
+        ""|*'$('*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 get_version() {
-    plutil -extract CFBundleShortVersionString raw "$PROJECT_ROOT/$INFO_PLIST_PATH" 2>/dev/null || echo "0.0.1"
+    _plist_value CFBundleShortVersionString || echo "0.0.1"
 }
 
 get_bundle_id() {
@@ -73,7 +114,7 @@ get_bundle_id() {
 }
 
 get_build_number() {
-    plutil -extract CFBundleVersion raw "$PROJECT_ROOT/$INFO_PLIST_PATH" 2>/dev/null || echo "1"
+    _plist_value CFBundleVersion || echo "1"
 }
 
 get_app_name_no_ext() {
