@@ -137,6 +137,13 @@ set -- "v${VERSION}" "$DMG_PATH" \
     --generate-notes
 [ -z "$PREV_TAG" ] || set -- "$@" --notes-start-tag "$PREV_TAG"
 
+# Name the repository explicitly. In a fork with an "upstream" remote, gh
+# resolves the base repository to the parent, so an unqualified release
+# create aims at upstream and fails on a tag it cannot see.
+if [ -n "${GITHUB_OWNER:-}" ] && [ -n "${GITHUB_REPO:-}" ]; then
+    set -- "$@" --repo "${GITHUB_OWNER}/${GITHUB_REPO}"
+fi
+
 if gh release create "$@"; then
     print_success "Release created successfully!"
     echo ""
