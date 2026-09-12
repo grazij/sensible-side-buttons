@@ -65,7 +65,18 @@ static void SBFToggleMissionControl(void) {
     });
 }
 
+// Defined below, where AppDelegate's private interface is visible.
+static void SBFHandleTapDisabled(CGEventType type, void* refcon);
+
 static CGEventRef SBFMouseCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
+    // Out-of-band types announcing that macOS has disabled the tap. It stays dead
+    // until something re-enables it explicitly, so handle these before the button
+    // dispatch below, which only ever looks at the button number.
+    if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+        SBFHandleTapDisabled(type, refcon);
+        return event;
+    }
+
     int64_t number = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
     BOOL down = (CGEventGetType(event) == kCGEventOtherMouseDown);
 
@@ -135,7 +146,27 @@ typedef NS_ENUM(NSInteger, MenuItem) {
 @property (nonatomic, retain) NSStatusItem* statusItem;
 @property (nonatomic, assign) CFMachPortRef tap;
 @property (nonatomic, assign) MenuMode menuMode;
+-(void) refreshSettings;
 @end
+
+// Runs on the tap's run loop, which is the main one. Re-enables the tap and brings
+// the menu bar icon back in sync, since nothing else refreshes it when the system
+// disables the tap behind the user's back.
+static void SBFHandleTapDisabled(CGEventType type, void* refcon) {
+    AppDelegate* delegate = (__bridge AppDelegate*)refcon;
+    if (delegate.tap == NULL) {
+        return;
+    }
+
+    os_log_error(logger ?: OS_LOG_DEFAULT, "Event tap disabled by the system (type %u) - re-enabling", (unsigned)type);
+    CGEventTapEnable(delegate.tap, true);
+
+    if (!CGEventTapIsEnabled(delegate.tap)) {
+        os_log_error(logger ?: OS_LOG_DEFAULT, "Failed to re-enable event tap");
+    }
+
+    [delegate refreshSettings];
+}
 
 @interface AboutView: NSView
 @property (nonatomic, retain) NSTextView* text;
@@ -402,7 +433,7 @@ typedef NS_ENUM(NSInteger, MenuItem) {
                                         kCGEventTapOptionDefault,
                                         CGEventMaskBit(kCGEventOtherMouseUp)|CGEventMaskBit(kCGEventOtherMouseDown),
                                         &SBFMouseCallback,
-                                        NULL);
+                                        (__bridge void*)self);
 
             if (self.tap != NULL) {
                 CFRunLoopSourceRef runLoopSource = CFMachPortCreateRunLoopSource(NULL, self.tap, 0);
